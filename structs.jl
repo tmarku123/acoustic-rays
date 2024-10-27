@@ -1,17 +1,18 @@
 struct InitialConditions
-    position::Vector{Float64}
-    angle::Float64
-    amplitude::Float64
+    position::Vector{Union{Float64,Int}}
+    angle::Union{Float64,Int}
+    amplitude::Union{Float64,Int}
 end
 
 struct Ray
-    position::Vector{Float64}
-    direction::Vector{Float64}
-    amplitude::Float64
-    length::Float64
+    position::Vector{Union{Float64, Int}}
+    direction::Vector{Union{Float64, Int}}
+    amplitude::Union{Float64, Int}
+    length::Union{Float64, Int}
     initial_conditions::InitialConditions
     status::String
 end
+
 
 struct MaterialProperties
     wave_velocity::Float64
@@ -24,14 +25,14 @@ struct Zone
 end
 
 struct Boundaries
-    indices::Matrix{Float64}
-    normals::Matrix{Vector{Float64}}
+    indices::Matrix{Union{Float64,Int}}
+    normals::Matrix{Vector{Union{Float64,Int}}}
 end
 
 struct Domain
     zones::Vector{Zone}
     boundaries::Boundaries
-    domain::Matrix{Float64}
+    domain::Matrix{Union{Float64,Int}}
     scaling_factor::Int64
 end
 
@@ -43,7 +44,7 @@ struct Simulation
     parameters::Parameters
     domain::Domain
     rays::Vector{Ray}
-    data::Array{Float64}
+    data::Array{Union{Float64,Int}}
 end
 
 struct Wavefront
