@@ -16,7 +16,7 @@ function create_domain(x_max::Int64,z_max::Int64,no_layers::Int64,scaling_factor
     end
 
     zones = Vector{Zone}(undef,no_layers)
-    Δv = 1
+    Δv = 1;
     Δρ = 1;
 
     for i = 1:no_layers
@@ -41,7 +41,7 @@ function create_domain(x_max::Int64,z_max::Int64,no_layers::Int64,scaling_factor
     return domain
 end;
 
-function set_initial_conditions(position::Vector{Float64},angle::Float64,amplitude::Float64)
+function set_initial_conditions(position::Vector{},angle,amplitude)
     initial_conditions = InitialConditions(position,angle,amplitude)
     return initial_conditions
 end
@@ -148,13 +148,12 @@ function update_ray(ray::Ray,domain::Domain)
     pos = ray.position
     dir = ray.direction
     vel = get_velocity(ray,domain)
-    dist = dir.*vel*dt 
-    new_pos = pos .+ dist 
-    ds = sqrt(dist[1]^2 + dist[2]^2)
-    length = ray.length + ds
+    ds = dir.*vel*dt 
+    new_pos = pos .+ ds 
+    length = ray.length + norm(ds)
     IC = ray.initial_conditions
     a0 = IC.amplitude
-    new_amp = a0*sqrt(ds/length)
+    new_amp = a0*sqrt(norm(ds)/length)
 
     return Ray(new_pos,dir,new_amp,length,IC,"active")
 end;
@@ -167,14 +166,14 @@ function reflect_ray(ray::Ray,domain::Domain)
     outgoing = dir - 2*dot(dir,n)*n 
     angle = acosd(dir[1])
     IC = InitialConditions(pos,angle,amp)
-    length = ray.length
+    length = 0
     damping = 0.8
     new_amp = amp*damping
     reflected_ray = Ray(pos,outgoing,new_amp,length,IC,"active")
     return reflected_ray
 end;
 
-function save_ray(ray::Ray,data::Array{Float64},ray_index::Int64,time_index::Int64)
+function save_ray(ray::Ray,data::Array{},ray_index::Int64,time_index::Int64)
     (z,x) = ray.position 
     amp = ray.amplitude
     data[time_index,:,ray_index] .= [z,x,amp]
@@ -192,14 +191,18 @@ function snells_law(ray::Ray,domain::Domain)
     hyp = sqrt(dx^2 + dz^2)
     sinθ1 = dx/hyp
     sinθ2 = (vel2/vel1)*sinθ1
+
     if -1 <= sinθ2 <= 1
-        θ2 = asin(sinθ2)
-        new_direction = [cos(θ2)*sign(dir[1]), sin(θ2)]
-        length = ray.length
-        IC = ray.initial_conditions
-        snells_ray = Ray(pos,new_direction,amp,length,IC,"active")
-        updated_snells_ray = update_ray(snells_ray,domain)
-        return updated_snells_ray
+        θ2 = asind(sinθ2)
+        new_direction = [cosd(θ2)*sign(dir[1]), sind(θ2)]
+        length = updated_ray.length
+        a0 = ray.initial_conditions.amplitude
+        new_pos = updated_ray.position
+        new_amp = updated_ray.amplitude
+        IC = InitialConditions(new_pos,θ2,a0)
+        snells_ray = Ray(new_pos,new_direction,new_amp,length,IC,"active")
+
+        return snells_ray
     end
     return complete_ray(ray)
 end;
@@ -249,6 +252,16 @@ function compute_ray_simulation(simulation::Simulation)
     return Simulation(parameters,domain,rays,data)
 end;
 
+function get_number_of_rays_used(simulation::Simulation)
+    data = simulation.data 
+    for i = 1:size(data,3)
+        data_slice = data[:,:,i]
+        if maximum(.!isnan.(data_slice)) == false
+            return i 
+        end
+    end
+end
+
 function obtain_wavefronts(simulations::Vector{Simulation})
     time = simulations[1].parameters.time
     nt = size(time,1)
@@ -257,7 +270,7 @@ function obtain_wavefronts(simulations::Vector{Simulation})
     wavefronts = Vector{Wavefront}(undef,nt)    
     for i = 1:nt
         t = time[i]
-        snapshot = ones(nz,nx).*NaN
+        snapshot = zeros(nz,nx)
         for j = 1:size(simulations)[1]
             data = simulations[j].data[i,:,:]
             indc = .!isnan.(data)
@@ -286,35 +299,44 @@ function obtain_wavefronts(simulations::Vector{Simulation})
     return wavefronts
 end
 
-function animate_rays(data,domain::Domain,animation_time::Int64)
+function animate_rays(data,domain::Domain,animation_time::Int64,no_layers::Int64)
     frame_rate = 30
     total_frames = animation_time*frame_rate
     max_steps = size(data,1)
+    (z_max,x_max) = size(domain.domain)
+    changes = collect(range(0,z_max,no_layers+1))
+    changes[1] = NaN; changes[end] = NaN
+    x_line = ones(x_max,size(changes,1)).*collect(1:x_max)
+    y_line = ones(x_max,size(changes,1)).*changes'
 
     x = data[:,2,:]
     z = data[:,1,:]
-    scaling = domain.scaling_factor
+
     (nz,nx) = size(domain.domain)
-    scaled_domain = [domain.domain[i, j] for i in 1:scaling:nx, j in 1:scaling:nz]
-    
+    x_line = ones(x_max,size(changes,1)).*collect(1:x_max)
+    y_line = ones(x_max,size(changes,1)).*changes'
     anim = @animate for i = 1:total_frames
         indc = Int(round((i/total_frames)*max_steps))
-        heatmap(scaled_domain,yflip=true,alpha=0.2,colorbar=false)
-        plot(
+        plot(x_line,y_line,labels=false,color=:black,yflip=true,xlims=(0,x_max),ylims=(0,z_max))
+        plot!(
             x[1:indc,:],
             z[1:indc,:],
             yflip = true,
-            xlims=([0,nx/scaling]),
-            ylims=([0,nz/scaling]),
             labels=false
             )
+
     end
     display(anim)
     gif(anim, "ray_animation.gif", fps = frame_rate); 
 end;
 
-function animate_wavefronts(simulations::Vector{Simulation},wavefronts::Vector{Wavefront},animation_time::Int64)
+function animate_wavefronts(simulations::Vector{Simulation},wavefronts::Vector{Wavefront},animation_time::Int64,no_layers::Int64)
     domain_map = simulations[1].domain.domain
+    (z_max,x_max) = size(domain_map)
+    changes = collect(range(0,z_max,no_layers+1))
+    changes[1] = NaN; changes[end] = NaN
+    x_line = ones(x_max,size(changes,1)).*collect(1:x_max)
+    y_line = ones(x_max,size(changes,1)).*changes'
     nt = size(wavefronts,1)
     desired_framerate = 30
     frames_req = animation_time*desired_framerate
@@ -322,8 +344,9 @@ function animate_wavefronts(simulations::Vector{Simulation},wavefronts::Vector{W
 
     anim = @animate for i = 1:frames_req
         i = clamp(Int(round((i/frames_req)*nt)), 1, nt)
-        heatmap(domain_map,alpa=0.5,yflip=true)
-        heatmap!(wavefronts[i].snapshot,yflip=true,colorbar=false,clims=(0,maximum(domain_map))
+        #heatmap(domain_map,alpa=0.1,yflip=true)
+        plot(x_line,y_line,labels=false,color=:black,yflip=true)
+        heatmap!(wavefronts[i].snapshot,yflip=true,colorbar=false,clims=(0,5)
         ,color=colors,title = "Time: $(wavefronts[i].time)")
     end
 
@@ -331,4 +354,45 @@ function animate_wavefronts(simulations::Vector{Simulation},wavefronts::Vector{W
     gif(anim, "wavefront_animation.gif", fps=desired_framerate)
 end
 
+
+function darkmode_animate_wavefronts(simulations::Vector{Simulation}, wavefronts::Vector{Wavefront}, animation_time::Int64, no_layers::Int64)
+    domain_map = simulations[1].domain.domain
+    (z_max, x_max) = size(domain_map)
+    changes = collect(range(0, z_max, no_layers + 1))
+    changes[1] = NaN
+    changes[end] = NaN
+    x_line = ones(x_max, size(changes, 1)) .* collect(1:x_max)
+    y_line = ones(x_max, size(changes, 1)) .* changes'
+    nt = size(wavefronts, 1)
+    desired_framerate = 30
+    frames_req = animation_time * desired_framerate
+    colors = cgrad([RGBA(0.15, 0.15, 0.15, 0.0), RGBA(1.0, 1.0, 1.0)], [0, 1])  # Heatmap with transparent dark to bright white
+
+    anim = @animate for i = 1:frames_req
+        i = clamp(Int(round((i / frames_req) * nt)), 1, nt)
+
+        plot(
+            x_line, y_line,
+            labels = false,
+            color = :white,
+            yflip = true,
+            background_color = RGB(0.15, 0.15, 0.15),  
+            xlims = (0, x_max),
+            ylims = (0, z_max)
+        )
+
+        heatmap!(
+            wavefronts[i].snapshot,
+            yflip = true,
+            colorbar = false,
+            clims = (0, 5),
+            color = colors,
+            alpha = 0.8, 
+            title = "Time: $(wavefronts[i].time)"
+        )
+    end
+
+    display(anim)
+    gif(anim, "wavefront_animation.gif", fps = desired_framerate)
+end
 
